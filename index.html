@@ -101,7 +101,7 @@
 
 // Definición de campos obligatorios, actualizada según las reglas del documento.
 const DEFAULT_REQUIRED_FIELDS = {
-    'OpenNavent': ['fechaDeModificacion', 'Avisos'],
+    'OpenNavent': ['Avisos'], // fechaDeModificacion ahora es una advertencia
     'Aviso': ['codigoAviso', 'descripcion', 'tipoDePropiedad', 'precios', 'localizacion', 'publicacion', 'publicador'],
     'Aviso/tipoDePropiedad': ['idTipo', 'tipo'],
     'Aviso/precios/precio': ['operacion', 'monto', 'moneda'],
@@ -132,7 +132,6 @@ class StructureAnalyzer {
 
         if (xmlDeclarations.length > 1) {
             const xmlDocs = this._splitMultiXml(content);
-            console.log(`Detectado multiXML con ${xmlDocs.length} documentos.`);
             xmlDocs.forEach((xmlDoc, i) => {
                 const { errors: docErrors, warnings: docWarnings, avisosCount: docAvisos } = this._analyzeXmlString(xmlDoc, `Documento ${i + 1}`, strictMode);
                 errors.push(...docErrors);
@@ -165,10 +164,17 @@ class StructureAnalyzer {
         const warnings = [];
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlString, "application/xml");
-
+        
+        // **NUEVO: Manejo de errores de sintaxis mejorado**
         const parserError = doc.querySelector("parsererror");
         if (parserError) {
-            errors.push(`${docName}: Error de sintaxis XML: ${parserError.textContent.split("\n")[0]}`);
+            let errorMessage = "Error de sintaxis XML. Revisa la estructura del archivo.";
+            const errorDetails = parserError.querySelector('div');
+            if (errorDetails) {
+                 // Limpia el mensaje para que sea más legible y traduce partes clave.
+                errorMessage = `Error de sintaxis: ${errorDetails.textContent.trim().replace('error on line', 'en línea').replace('at column', 'columna')}`;
+            }
+            errors.push(`${docName}: ${errorMessage}`);
             return { errors, warnings, avisosCount: 0 };
         }
 
@@ -176,7 +182,13 @@ class StructureAnalyzer {
         let avisosCount = 0;
 
         if (root.tagName === 'OpenNavent') {
-            this._checkRequiredFields(root, errors, docName, 'OpenNavent', strictMode);
+            // **NUEVO: <fechaDeModificacion> ahora es una advertencia**
+            const hasFecha = root.querySelector(':scope > fechaDeModificacion');
+            if (!hasFecha) {
+                warnings.push(`${docName}: Se recomienda incluir la etiqueta <fechaDeModificacion> para evitar la sobreescritura de datos.`);
+            }
+
+            this._checkRequiredFields(root, errors, warnings, docName, 'OpenNavent', strictMode);
             const avisosContainer = root.querySelector('Avisos');
             if (avisosContainer) {
                 const avisos = Array.from(avisosContainer.children).filter(el => el.tagName === 'Aviso');
@@ -198,41 +210,45 @@ class StructureAnalyzer {
                             return;
                         }
 
-                        this._checkRequiredFields(aviso, errors, docId, 'Aviso', strictMode);
+                        this._checkRequiredFields(aviso, errors, warnings, docId, 'Aviso', strictMode);
                     });
-                } else {
-                    // This error is already caught by the OpenNavent check, so it's optional here.
                 }
             }
         } else {
+            // El nombre del tag raíz puede variar (ej. Inmuebles), por eso es una advertencia.
             warnings.push(`${docName}: El elemento raíz no es '<OpenNavent>'. Se analizará como un XML genérico.`);
-            avisosCount = doc.querySelectorAll('Aviso').length;
-             this._checkRequiredFields(root, errors, docName, root.tagName, strictMode);
+            
+            // Intenta encontrar avisos o inmuebles para analizarlos individualmente
+            const avisos = doc.querySelectorAll('Aviso, Inmueble');
+            avisosCount = avisos.length;
+            avisos.forEach((aviso, i) => {
+                const codigo = aviso.querySelector('codigoAviso, IdInmueble')?.textContent || 'sin_codigo';
+                const docId = `${docName}: Aviso #${i + 1} (${codigo})`;
+                 this._checkRequiredFields(aviso, errors, warnings, docId, 'Aviso', strictMode);
+            });
         }
         
         return { errors, warnings, avisosCount };
     }
 
-    _checkRequiredFields(element, errors, docName, path, strictMode) {
+    _checkRequiredFields(element, errors, warnings, docName, path, strictMode) {
         const requiredFieldsForPath = this.requiredFields[path];
         
         if (requiredFieldsForPath) {
             const childTags = Array.from(element.children).map(child => child.tagName);
 
-            // Check for missing fields
             requiredFieldsForPath.forEach(field => {
                 if (!childTags.includes(field)) {
                     errors.push(`${docName}: Campo obligatorio '${field}' faltante en '${path}'.`);
                 }
             });
 
-            // Check for empty fields
             requiredFieldsForPath.forEach(field => {
                 const childElement = element.querySelector(`:scope > ${field}`);
                 if (childElement && (!childElement.textContent || childElement.textContent.trim() === '')) {
                     if(childElement.children.length === 0) {
                         if (path === 'Aviso/caracteristicas/caracteristica' && !strictMode) {
-                            // In non-strict mode, ignore this error for characteristics
+                            // En modo no estricto, se ignora este error.
                         } else {
                             errors.push(`${docName}: Campo obligatorio '${field}' en '${path}' está vacío.`);
                         }
@@ -241,21 +257,20 @@ class StructureAnalyzer {
             });
         }
 
-        // *** NUEVA REGLA ESPECIAL para idUbicacion vs Ubicacion ***
+        // Regla especial para idUbicacion vs Ubicacion
         if (path === 'Aviso/localizacion') {
             const childTags = Array.from(element.children).map(child => child.tagName);
             const hasIdUbicacion = childTags.includes('idUbicacion');
             const hasUbicacion = childTags.includes('Ubicacion');
-
             if (!hasIdUbicacion && !hasUbicacion) {
                 errors.push(`${docName}: Campo obligatorio 'idUbicacion' (o 'Ubicacion' como alternativa) faltante en '${path}'.`);
             }
         }
         
-        // Recursive call for children
+        // Llamada recursiva
         Array.from(element.children).forEach(child => {
             const newPath = `${path}/${child.tagName}`;
-            this._checkRequiredFields(child, errors, docName, newPath, strictMode);
+            this._checkRequiredFields(child, errors, warnings, docName, newPath, strictMode);
         });
     }
 }
@@ -291,18 +306,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    fileUpload.addEventListener('change', (e) => {
-        handleFileSelect(e.target.files[0]);
-    });
-
-    fileDropArea.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        fileDropArea.classList.add('dragover');
-    });
-    fileDropArea.addEventListener('dragleave', (e) => {
-        e.preventDefault();
-        fileDropArea.classList.remove('dragover');
-    });
+    fileUpload.addEventListener('change', (e) => handleFileSelect(e.target.files[0]));
+    fileDropArea.addEventListener('dragover', (e) => { e.preventDefault(); fileDropArea.classList.add('dragover'); });
+    fileDropArea.addEventListener('dragleave', (e) => { e.preventDefault(); fileDropArea.classList.remove('dragover'); });
     fileDropArea.addEventListener('drop', (e) => {
         e.preventDefault();
         fileDropArea.classList.remove('dragover');
@@ -312,7 +318,6 @@ document.addEventListener('DOMContentLoaded', () => {
             handleFileSelect(files[0]);
         }
     });
-
 
     analyzeButton.addEventListener('click', () => {
         if (!currentFile) return;
@@ -343,22 +348,10 @@ document.addEventListener('DOMContentLoaded', () => {
         summarySection.classList.remove('hidden');
 
         summaryContent.innerHTML = `
-            <div class="bg-gray-700/50 p-3 rounded-lg">
-                <div class="text-2xl font-bold">${results.avisosCount}</div>
-                <div class="text-sm text-gray-400">Avisos</div>
-            </div>
-            <div class="bg-gray-700/50 p-3 rounded-lg">
-                <div class="text-2xl font-bold text-red-400">${results.errors.length}</div>
-                <div class="text-sm text-gray-400">Errores</div>
-            </div>
-            <div class="bg-gray-700/50 p-3 rounded-lg">
-                <div class="text-2xl font-bold text-yellow-400">${results.warnings.length}</div>
-                <div class="text-sm text-gray-400">Advertencias</div>
-            </div>
-            <div class="bg-gray-700/50 p-3 rounded-lg">
-                <div class="text-2xl font-bold">${results.executionTime}s</div>
-                <div class="text-sm text-gray-400">Tiempo</div>
-            </div>
+            <div class="bg-gray-700/50 p-3 rounded-lg"><div class="text-2xl font-bold">${results.avisosCount}</div><div class="text-sm text-gray-400">Avisos</div></div>
+            <div class="bg-gray-700/50 p-3 rounded-lg"><div class="text-2xl font-bold text-red-400">${results.errors.length}</div><div class="text-sm text-gray-400">Errores</div></div>
+            <div class="bg-gray-700/50 p-3 rounded-lg"><div class="text-2xl font-bold text-yellow-400">${results.warnings.length}</div><div class="text-sm text-gray-400">Advertencias</div></div>
+            <div class="bg-gray-700/50 p-3 rounded-lg"><div class="text-2xl font-bold">${results.executionTime}s</div><div class="text-sm text-gray-400">Tiempo</div></div>
         `;
         
         let existingStatus = summarySection.querySelector('.status-message');
