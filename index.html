@@ -172,7 +172,7 @@ class StructureAnalyzer {
         if (root.tagName === 'OpenNavent') {
             const hasFecha = root.querySelector(':scope > fechaDeModificacion');
             if (!hasFecha) {
-                warnings.push(`${docName}: Se recomienda incluir la etiqueta <fechaDeModificacion> para evitar la sobreescritura de datos.`);
+                warnings.push(`${docName}: Se recomienda incluir la etiqueta &lt;fechaDeModificacion&gt; para evitar la sobreescritura de datos.`);
             }
 
             this._checkRequiredFields(root, errors, warnings, docName, 'OpenNavent', strictMode);
@@ -360,4 +360,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </body>
 </html>
+
 
