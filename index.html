@@ -51,7 +51,8 @@
         <!-- Opciones de Análisis -->
         <div class="flex items-center justify-center space-x-3 text-sm text-gray-400">
             <input type="checkbox" id="strict-mode" name="strict-mode" class="h-4 w-4 rounded border-gray-500 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800" checked>
-            <label for="strict-mode">Modo Estricto (reportar campos vacíos en características)</label>
+            <!-- **NUEVO: Etiqueta del checkbox actualizada** -->
+            <label for="strict-mode">Modo Estricto (requerir &lt;id&gt; y reportar vacíos en características)</label>
         </div>
 
         <!-- Botón de Análisis -->
@@ -99,14 +100,13 @@
 <script>
 // --- Lógica del Analizador (Portado de Python a JavaScript) ---
 
-// **NUEVO: Definición de campos obligatorios, actualizada según las últimas reglas.**
 const DEFAULT_REQUIRED_FIELDS = {
-    'OpenNavent': ['Avisos'], // fechaDeModificacion ahora es una advertencia
+    'OpenNavent': ['Avisos'],
     'Aviso': ['codigoAviso', 'descripcion', 'tipoDePropiedad', 'precios', 'localizacion', 'publicador'],
     'Aviso/tipoDePropiedad': ['idTipo'],
     'Aviso/precios/precio': ['operacion', 'monto', 'moneda'],
     'Aviso/publicador': ['codigoInmobiliaria'],
-    'Aviso/caracteristicas/caracteristica': ['id', 'nombre'] // Se mantiene para el "Modo Estricto"
+    'Aviso/caracteristicas/caracteristica': ['id', 'nombre'] // La regla base se mantiene, la lógica la flexibiliza
 };
 
 class StructureAnalyzer {
@@ -216,18 +216,24 @@ class StructureAnalyzer {
         if (requiredFieldsForPath) {
             const childTags = Array.from(element.children).map(child => child.tagName);
 
+            // Check for missing fields
             requiredFieldsForPath.forEach(field => {
+                // **NUEVO: Lógica flexible para el 'id' de la característica**
+                if (path === 'Aviso/caracteristicas/caracteristica' && field === 'id' && !strictMode) {
+                    return; // En modo flexible, no se requiere el 'id'
+                }
                 if (!childTags.includes(field)) {
                     errors.push(`${docName}: Campo obligatorio '${field}' faltante en '${path}'.`);
                 }
             });
 
+            // Check for empty fields
             requiredFieldsForPath.forEach(field => {
                 const childElement = element.querySelector(`:scope > ${field}`);
                 if (childElement && (!childElement.textContent || childElement.textContent.trim() === '')) {
                     if(childElement.children.length === 0) {
                         if (path === 'Aviso/caracteristicas/caracteristica' && !strictMode) {
-                            // En modo no estricto, se ignora este error.
+                            // En modo flexible, los campos de característica vacíos se ignoran
                         } else {
                             errors.push(`${docName}: Campo obligatorio '${field}' en '${path}' está vacío.`);
                         }
@@ -236,7 +242,6 @@ class StructureAnalyzer {
             });
         }
 
-        // **NUEVO: Regla especial para Ubicacion (idUbicacion O (latitud Y longitud))**
         if (path === 'Aviso/localizacion') {
             const childTags = Array.from(element.children).map(child => child.tagName);
             const hasIdUbicacion = childTags.includes('idUbicacion');
@@ -248,7 +253,7 @@ class StructureAnalyzer {
             }
         }
         
-        // Llamada recursiva
+        // Recursive call
         Array.from(element.children).forEach(child => {
             const newPath = `${path}/${child.tagName}`;
             this._checkRequiredFields(child, errors, warnings, docName, newPath, strictMode);
@@ -357,5 +362,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </body>
 </html>
-
 
