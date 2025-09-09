@@ -47,9 +47,15 @@
                 <input id="file-upload" name="file-upload" type="file" class="sr-only" accept=".xml">
             </label>
         </div>
+        
+        <!-- Opciones de Análisis -->
+        <div class="flex items-center justify-center space-x-3 text-sm text-gray-400">
+            <input type="checkbox" id="strict-mode" name="strict-mode" class="h-4 w-4 rounded border-gray-500 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800" checked>
+            <label for="strict-mode">Modo Estricto (reportar campos vacíos en características)</label>
+        </div>
 
         <!-- Botón de Análisis -->
-        <div class="flex justify-center">
+        <div class="flex justify-center pt-2">
             <button id="analyze-button"
                 class="w-full md:w-1/2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-colors duration-300 shadow-lg"
                 disabled>
@@ -113,29 +119,27 @@ class StructureAnalyzer {
      * Analiza el contenido de un archivo XML.
      * @param {string} content - El contenido del archivo.
      * @param {string} fileName - El nombre del archivo.
+     * @param {boolean} strictMode - Si se deben reportar errores estrictos.
      * @returns {{errors: string[], warnings: string[], avisosCount: number}}
      */
-    analyzeFileContent(content, fileName) {
+    analyzeFileContent(content, fileName, strictMode) {
         let errors = [];
         let warnings = [];
         let avisosCount = 0;
 
-        // Contar la cantidad de declaraciones XML para detectar MultiXML
         const xmlDeclarations = content.match(/<\?xml/g) || [];
 
         if (xmlDeclarations.length > 1) {
-            // MultiXML con múltiples declaraciones
             const xmlDocs = this._splitMultiXml(content);
             console.log(`Detectado multiXML con ${xmlDocs.length} documentos.`);
             xmlDocs.forEach((xmlDoc, i) => {
-                const { errors: docErrors, warnings: docWarnings, avisosCount: docAvisos } = this._analyzeXmlString(xmlDoc, `Documento ${i + 1}`);
+                const { errors: docErrors, warnings: docWarnings, avisosCount: docAvisos } = this._analyzeXmlString(xmlDoc, `Documento ${i + 1}`, strictMode);
                 errors.push(...docErrors);
                 warnings.push(...docWarnings);
                 avisosCount += docAvisos;
             });
         } else {
-            // XML único o contenedor
-            const { errors: docErrors, warnings: docWarnings, avisosCount: docAvisos } = this._analyzeXmlString(content, "XML");
+            const { errors: docErrors, warnings: docWarnings, avisosCount: docAvisos } = this._analyzeXmlString(content, "XML", strictMode);
             errors.push(...docErrors);
             warnings.push(...docWarnings);
             avisosCount += docAvisos;
@@ -144,13 +148,7 @@ class StructureAnalyzer {
         return { errors, warnings, avisosCount };
     }
 
-    /**
-     * Divide un string que contiene múltiples documentos XML.
-     * @param {string} content - El contenido del archivo.
-     * @returns {string[]} - Un array de strings, cada uno siendo un documento XML.
-     */
     _splitMultiXml(content) {
-        // Divide el contenido por la declaración XML, manteniendo el delimitador.
         const parts = content.split(/(<\?xml[^>]+\?>)/).filter(Boolean);
         const docs = [];
         for (let i = 0; i < parts.length; i += 2) {
@@ -160,20 +158,13 @@ class StructureAnalyzer {
         }
         return docs;
     }
-
-    /**
-     * Analiza un string que representa un documento XML.
-     * @param {string} xmlString - El contenido XML.
-     * @param {string} docName - El nombre identificador del documento.
-     * @returns {{errors: string[], warnings: string[], avisosCount: number}}
-     */
-    _analyzeXmlString(xmlString, docName) {
+    
+    _analyzeXmlString(xmlString, docName, strictMode) {
         const errors = [];
         const warnings = [];
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlString, "application/xml");
 
-        // Verificar errores de sintaxis del parser
         const parserError = doc.querySelector("parsererror");
         if (parserError) {
             errors.push(`${docName}: Error de sintaxis XML: ${parserError.textContent.split("\n")[0]}`);
@@ -194,20 +185,18 @@ class StructureAnalyzer {
                         const codigo = aviso.querySelector('codigoAviso')?.textContent || 'sin_codigo';
                         const docId = `${docName}: Aviso #${i + 1} (${codigo})`;
 
-                        // Manejar xsi:nil
                         const nilAttr = aviso.getAttributeNS('http://www.w3.org/2001/XMLSchema-instance', 'nil');
                         if (nilAttr && (nilAttr === 'true' || nilAttr === '1')) {
                             warnings.push(`${docId} omitido por tener xsi:nil="${nilAttr}"`);
-                            return; // Saltar al siguiente aviso
+                            return;
                         }
                         
-                        // Verificar si el aviso está vacío
                         if (aviso.children.length === 0) {
                             errors.push(`${docId} está vacío (no tiene elementos hijos).`);
                             return;
                         }
 
-                        this._checkRequiredFields(aviso, errors, docId, 'Aviso');
+                        this._checkRequiredFields(aviso, errors, docId, 'Aviso', strictMode);
                     });
                 } else {
                     errors.push(`${docName}: No se encontraron elementos '<Aviso>' dentro de '<Avisos>'.`);
@@ -216,59 +205,44 @@ class StructureAnalyzer {
                 errors.push(`${docName}: No se encontró el elemento '<Avisos>' en el MultiXML.`);
             }
         } else {
-            // Es un XML simple, no el formato esperado. Podríamos añadir una advertencia.
             warnings.push(`${docName}: El elemento raíz no es '<OpenNavent>'. Se analizará como un XML genérico.`);
             avisosCount = doc.querySelectorAll('Aviso').length;
-             this._checkRequiredFields(root, errors, docName, root.tagName);
+             this._checkRequiredFields(root, errors, docName, root.tagName, strictMode);
         }
         
         return { errors, warnings, avisosCount };
     }
 
-    /**
-     * Verifica recursivamente los campos obligatorios.
-     * @param {Element} element - El elemento XML actual.
-     * @param {string[]} errors - El array para acumular errores.
-     * @param {string} docName - El nombre del documento para los mensajes de error.
-     * @param {string} path - La ruta actual en la estructura XML.
-     */
-    _checkRequiredFields(element, errors, docName, path) {
+    _checkRequiredFields(element, errors, docName, path, strictMode) {
         const requiredFieldsForPath = this.requiredFields[path];
         
         if (requiredFieldsForPath) {
             const childTags = Array.from(element.children).map(child => child.tagName);
 
-            // Verificar campos faltantes
             requiredFieldsForPath.forEach(field => {
                 if (!childTags.includes(field)) {
                     errors.push(`${docName}: Campo obligatorio '${field}' faltante en '${path}'.`);
                 }
             });
 
-            // Verificar campos vacíos
             requiredFieldsForPath.forEach(field => {
                 const childElement = element.querySelector(`:scope > ${field}`);
                 if (childElement && (!childElement.textContent || childElement.textContent.trim() === '')) {
-                     // Solo reportar como error si no tiene hijos (no es un nodo contenedor)
                     if(childElement.children.length === 0) {
-                        errors.push(`${docName}: Campo obligatorio '${field}' en '${path}' está vacío.`);
+                        // Manejo especial para características en modo no estricto
+                        if (path === 'Aviso/caracteristicas/caracteristica' && !strictMode) {
+                            // En modo no estricto, ignoramos este error para replicar el comportamiento anterior
+                        } else {
+                            errors.push(`${docName}: Campo obligatorio '${field}' en '${path}' está vacío.`);
+                        }
                     }
                 }
             });
         }
         
-        // Llamada recursiva para los hijos
         Array.from(element.children).forEach(child => {
             const newPath = `${path}/${child.tagName}`;
-             // Casos especiales como precios/precio, donde el padre es plural y el hijo singular
-            const specialPath = `${path}/${child.tagName.toLowerCase()}`;
-            
-            if (this.requiredFields[newPath] || this.requiredFields[specialPath]) {
-                 this._checkRequiredFields(child, errors, docName, this.requiredFields[newPath] ? newPath : specialPath);
-            } else {
-                // Continuar la recursión para nodos anidados no definidos explícitamente
-                this._checkRequiredFields(child, errors, docName, newPath);
-            }
+            this._checkRequiredFields(child, errors, docName, newPath, strictMode);
         });
     }
 }
@@ -308,7 +282,6 @@ document.addEventListener('DOMContentLoaded', () => {
         handleFileSelect(e.target.files[0]);
     });
 
-    // Funcionalidad de arrastrar y soltar
     fileDropArea.addEventListener('dragover', (e) => {
         e.preventDefault();
         fileDropArea.classList.add('dragover');
@@ -322,7 +295,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fileDropArea.classList.remove('dragover');
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            fileUpload.files = files; // Asignar al input para consistencia
+            fileUpload.files = files;
             handleFileSelect(files[0]);
         }
     });
@@ -340,9 +313,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const reader = new FileReader();
         reader.onload = (e) => {
             const content = e.target.result;
+            const strictMode = document.getElementById('strict-mode').checked;
             const analyzer = new StructureAnalyzer();
             const startTime = performance.now();
-            const results = analyzer.analyzeFileContent(content, currentFile.name);
+            const results = analyzer.analyzeFileContent(content, currentFile.name, strictMode);
             const endTime = performance.now();
             results.executionTime = ((endTime - startTime) / 1000).toFixed(2);
             
@@ -355,7 +329,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const displayResults = (results) => {
         summarySection.classList.remove('hidden');
 
-        // Resumen
         summaryContent.innerHTML = `
             <div class="bg-gray-700/50 p-3 rounded-lg">
                 <div class="text-2xl font-bold">${results.avisosCount}</div>
@@ -374,21 +347,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="text-sm text-gray-400">Tiempo</div>
             </div>
         `;
+        
+        let existingStatus = summarySection.querySelector('.status-message');
+        if(existingStatus) existingStatus.remove();
 
-        // Advertencias
+        if (results.errors.length === 0 && results.warnings.length === 0) {
+             summaryContent.insertAdjacentHTML('afterend', `<p class="status-message text-center col-span-2 md:col-span-4 mt-4 text-green-400">✅ ¡El archivo parece estar perfecto!</p>`);
+        }
+
         if (results.warnings.length > 0) {
             warningsSection.classList.remove('hidden');
             warningsList.innerHTML = results.warnings.map(w => `<div>- ${w}</div>`).join('');
         }
 
-        // Errores
         if (results.errors.length > 0) {
             errorsSection.classList.remove('hidden');
             errorsList.innerHTML = results.errors.map(e => `<div>- ${e}</div>`).join('');
-        }
-        
-        if(results.errors.length === 0 && results.warnings.length === 0) {
-             summaryContent.insertAdjacentHTML('afterend', `<p class="text-center col-span-2 md:col-span-4 mt-4 text-green-400">✅ ¡El archivo parece estar perfecto!</p>`);
         }
     };
 });
@@ -396,3 +370,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </body>
 </html>
+
+
