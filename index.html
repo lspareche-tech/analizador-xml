@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Estructura XML</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .file-drop-area {
+            transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+        }
+        .file-drop-area.dragover {
+            background-color: #374151; /* gray-700 */
+            border-color: #3b82f6; /* blue-500 */
+        }
+        #results-container ul {
+            padding-left: 1.5rem;
+        }
+        #results-container li {
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-4xl bg-gray-800 rounded-2xl shadow-2xl p-6 md:p-8 space-y-6">
+        <!-- Encabezado -->
+        <div class="text-center">
+            <h1 class="text-3xl font-bold text-gray-100">Analizador de Estructura XML</h1>
+            <p class="text-gray-400 mt-2">Sube o arrastra un archivo XML para validar su estructura y campos obligatorios.</p>
+        </div>
+
+        <!-- Área de Carga de Archivo -->
+        <div class="space-y-4">
+            <label for="file-upload" class="file-drop-area relative block w-full border-2 border-dashed border-gray-600 rounded-lg p-12 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-700">
+                <div class="flex flex-col items-center justify-center">
+                    <svg class="w-12 h-12 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-4-4V6a4 4 0 014-4h10a4 4 0 014 4v6a4 4 0 01-4 4H7z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m3-3H7"></path></svg>
+                    <p id="file-name" class="mt-2 text-sm text-gray-400">
+                        <span class="font-semibold text-blue-400">Haz clic para subir</span> o arrastra y suelta el archivo
+                    </p>
+                    <p class="text-xs text-gray-500">Soporta XML y MultiXML</p>
+                </div>
+                <input id="file-upload" name="file-upload" type="file" class="sr-only" accept=".xml">
+            </label>
+        </div>
+
+        <!-- Botón de Análisis -->
+        <div class="flex justify-center">
+            <button id="analyze-button"
+                class="w-full md:w-1/2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-colors duration-300 shadow-lg"
+                disabled>
+                Analizar Archivo
+            </button>
+        </div>
+
+        <!-- Área de Resultados -->
+        <div id="results-container" class="hidden space-y-6 pt-6 border-t border-gray-700">
+             <!-- Spinner de carga -->
+            <div id="loading-spinner" class="hidden flex items-center justify-center space-x-2">
+                <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-gray-400">Analizando...</span>
+            </div>
+
+            <!-- Resumen -->
+            <div id="summary-section" class="bg-gray-900/50 p-4 rounded-lg">
+                <h2 class="text-xl font-semibold mb-2">Resultados del Análisis</h2>
+                <div id="summary-content" class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                    <!-- Los resultados se insertarán aquí -->
+                </div>
+            </div>
+
+            <!-- Advertencias -->
+            <div id="warnings-section" class="hidden">
+                <h3 class="text-lg font-semibold text-yellow-400 mb-2">⚠️ Advertencias</h3>
+                <div id="warnings-list" class="bg-yellow-900/30 text-yellow-300 p-4 rounded-lg text-sm space-y-2"></div>
+            </div>
+
+            <!-- Errores -->
+            <div id="errors-section" class="hidden">
+                <h3 class="text-lg font-semibold text-red-400 mb-2">❌ Errores Encontrados</h3>
+                <div id="errors-list" class="bg-red-900/30 text-red-300 p-4 rounded-lg text-sm space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+// --- Lógica del Analizador (Portado de Python a JavaScript) ---
+
+// Definición de campos obligatorios, igual que en tu script de Python
+const DEFAULT_REQUIRED_FIELDS = {
+    'Aviso': ['codigoAviso', 'descripcion', 'tipoDePropiedad', 'precios', 'localizacion', 'publicacion', 'publicador'],
+    'Aviso/tipoDePropiedad': ['idTipo', 'tipo'],
+    'Aviso/precios/precio': ['operacion', 'monto', 'moneda'],
+    'Aviso/localizacion': ['direccion', 'idUbicacion', 'muestraMapa'],
+    'Aviso/publicacion': ['tipoDePublicacion'],
+    'Aviso/publicador': ['codigoInmobiliaria', 'emailAsesor'],
+    'Aviso/caracteristicas/caracteristica': ['id', 'nombre']
+};
+
+class StructureAnalyzer {
+    constructor(requiredFields = DEFAULT_REQUIRED_FIELDS) {
+        this.requiredFields = requiredFields;
+    }
+
+    /**
+     * Analiza el contenido de un archivo XML.
+     * @param {string} content - El contenido del archivo.
+     * @param {string} fileName - El nombre del archivo.
+     * @returns {{errors: string[], warnings: string[], avisosCount: number}}
+     */
+    analyzeFileContent(content, fileName) {
+        let errors = [];
+        let warnings = [];
+        let avisosCount = 0;
+
+        // Contar la cantidad de declaraciones XML para detectar MultiXML
+        const xmlDeclarations = content.match(/<\?xml/g) || [];
+
+        if (xmlDeclarations.length > 1) {
+            // MultiXML con múltiples declaraciones
+            const xmlDocs = this._splitMultiXml(content);
+            console.log(`Detectado multiXML con ${xmlDocs.length} documentos.`);
+            xmlDocs.forEach((xmlDoc, i) => {
+                const { errors: docErrors, warnings: docWarnings, avisosCount: docAvisos } = this._analyzeXmlString(xmlDoc, `Documento ${i + 1}`);
+                errors.push(...docErrors);
+                warnings.push(...docWarnings);
+                avisosCount += docAvisos;
+            });
+        } else {
+            // XML único o contenedor
+            const { errors: docErrors, warnings: docWarnings, avisosCount: docAvisos } = this._analyzeXmlString(content, "XML");
+            errors.push(...docErrors);
+            warnings.push(...docWarnings);
+            avisosCount += docAvisos;
+        }
+
+        return { errors, warnings, avisosCount };
+    }
+
+    /**
+     * Divide un string que contiene múltiples documentos XML.
+     * @param {string} content - El contenido del archivo.
+     * @returns {string[]} - Un array de strings, cada uno siendo un documento XML.
+     */
+    _splitMultiXml(content) {
+        // Divide el contenido por la declaración XML, manteniendo el delimitador.
+        const parts = content.split(/(<\?xml[^>]+\?>)/).filter(Boolean);
+        const docs = [];
+        for (let i = 0; i < parts.length; i += 2) {
+            if (parts[i] && parts[i+1]) {
+                docs.push(parts[i] + parts[i+1]);
+            }
+        }
+        return docs;
+    }
+
+    /**
+     * Analiza un string que representa un documento XML.
+     * @param {string} xmlString - El contenido XML.
+     * @param {string} docName - El nombre identificador del documento.
+     * @returns {{errors: string[], warnings: string[], avisosCount: number}}
+     */
+    _analyzeXmlString(xmlString, docName) {
+        const errors = [];
+        const warnings = [];
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xmlString, "application/xml");
+
+        // Verificar errores de sintaxis del parser
+        const parserError = doc.querySelector("parsererror");
+        if (parserError) {
+            errors.push(`${docName}: Error de sintaxis XML: ${parserError.textContent.split("\n")[0]}`);
+            return { errors, warnings, avisosCount: 0 };
+        }
+
+        const root = doc.documentElement;
+        let avisosCount = 0;
+
+        if (root.tagName === 'OpenNavent') {
+            const avisosContainer = root.querySelector('Avisos');
+            if (avisosContainer) {
+                const avisos = Array.from(avisosContainer.children).filter(el => el.tagName === 'Aviso');
+                avisosCount = avisos.length;
+
+                if (avisos.length > 0) {
+                    avisos.forEach((aviso, i) => {
+                        const codigo = aviso.querySelector('codigoAviso')?.textContent || 'sin_codigo';
+                        const docId = `${docName}: Aviso #${i + 1} (${codigo})`;
+
+                        // Manejar xsi:nil
+                        const nilAttr = aviso.getAttributeNS('http://www.w3.org/2001/XMLSchema-instance', 'nil');
+                        if (nilAttr && (nilAttr === 'true' || nilAttr === '1')) {
+                            warnings.push(`${docId} omitido por tener xsi:nil="${nilAttr}"`);
+                            return; // Saltar al siguiente aviso
+                        }
+                        
+                        // Verificar si el aviso está vacío
+                        if (aviso.children.length === 0) {
+                            errors.push(`${docId} está vacío (no tiene elementos hijos).`);
+                            return;
+                        }
+
+                        this._checkRequiredFields(aviso, errors, docId, 'Aviso');
+                    });
+                } else {
+                    errors.push(`${docName}: No se encontraron elementos '<Aviso>' dentro de '<Avisos>'.`);
+                }
+            } else {
+                errors.push(`${docName}: No se encontró el elemento '<Avisos>' en el MultiXML.`);
+            }
+        } else {
+            // Es un XML simple, no el formato esperado. Podríamos añadir una advertencia.
+            warnings.push(`${docName}: El elemento raíz no es '<OpenNavent>'. Se analizará como un XML genérico.`);
+            avisosCount = doc.querySelectorAll('Aviso').length;
+             this._checkRequiredFields(root, errors, docName, root.tagName);
+        }
+        
+        return { errors, warnings, avisosCount };
+    }
+
+    /**
+     * Verifica recursivamente los campos obligatorios.
+     * @param {Element} element - El elemento XML actual.
+     * @param {string[]} errors - El array para acumular errores.
+     * @param {string} docName - El nombre del documento para los mensajes de error.
+     * @param {string} path - La ruta actual en la estructura XML.
+     */
+    _checkRequiredFields(element, errors, docName, path) {
+        const requiredFieldsForPath = this.requiredFields[path];
+        
+        if (requiredFieldsForPath) {
+            const childTags = Array.from(element.children).map(child => child.tagName);
+
+            // Verificar campos faltantes
+            requiredFieldsForPath.forEach(field => {
+                if (!childTags.includes(field)) {
+                    errors.push(`${docName}: Campo obligatorio '${field}' faltante en '${path}'.`);
+                }
+            });
+
+            // Verificar campos vacíos
+            requiredFieldsForPath.forEach(field => {
+                const childElement = element.querySelector(`:scope > ${field}`);
+                if (childElement && (!childElement.textContent || childElement.textContent.trim() === '')) {
+                     // Solo reportar como error si no tiene hijos (no es un nodo contenedor)
+                    if(childElement.children.length === 0) {
+                        errors.push(`${docName}: Campo obligatorio '${field}' en '${path}' está vacío.`);
+                    }
+                }
+            });
+        }
+        
+        // Llamada recursiva para los hijos
+        Array.from(element.children).forEach(child => {
+            const newPath = `${path}/${child.tagName}`;
+             // Casos especiales como precios/precio, donde el padre es plural y el hijo singular
+            const specialPath = `${path}/${child.tagName.toLowerCase()}`;
+            
+            if (this.requiredFields[newPath] || this.requiredFields[specialPath]) {
+                 this._checkRequiredFields(child, errors, docName, this.requiredFields[newPath] ? newPath : specialPath);
+            } else {
+                // Continuar la recursión para nodos anidados no definidos explícitamente
+                this._checkRequiredFields(child, errors, docName, newPath);
+            }
+        });
+    }
+}
+
+
+// --- Lógica de la Interfaz de Usuario (UI) ---
+
+document.addEventListener('DOMContentLoaded', () => {
+    const fileUpload = document.getElementById('file-upload');
+    const fileNameDisplay = document.getElementById('file-name');
+    const analyzeButton = document.getElementById('analyze-button');
+    const resultsContainer = document.getElementById('results-container');
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const summarySection = document.getElementById('summary-section');
+    const summaryContent = document.getElementById('summary-content');
+    const warningsSection = document.getElementById('warnings-section');
+    const warningsList = document.getElementById('warnings-list');
+    const errorsSection = document.getElementById('errors-section');
+    const errorsList = document.getElementById('errors-list');
+    const fileDropArea = document.querySelector('.file-drop-area');
+
+    let currentFile = null;
+
+    const handleFileSelect = (file) => {
+        if (file && file.type === 'text/xml') {
+            currentFile = file;
+            fileNameDisplay.innerHTML = `<span class="font-semibold">${file.name}</span>`;
+            analyzeButton.disabled = false;
+        } else {
+            currentFile = null;
+            fileNameDisplay.innerHTML = `<span class="font-semibold text-red-400">Archivo no válido.</span> Por favor, selecciona un archivo .xml`;
+            analyzeButton.disabled = true;
+        }
+    };
+
+    fileUpload.addEventListener('change', (e) => {
+        handleFileSelect(e.target.files[0]);
+    });
+
+    // Funcionalidad de arrastrar y soltar
+    fileDropArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileDropArea.classList.add('dragover');
+    });
+    fileDropArea.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        fileDropArea.classList.remove('dragover');
+    });
+    fileDropArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileDropArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            fileUpload.files = files; // Asignar al input para consistencia
+            handleFileSelect(files[0]);
+        }
+    });
+
+
+    analyzeButton.addEventListener('click', () => {
+        if (!currentFile) return;
+
+        resultsContainer.classList.remove('hidden');
+        loadingSpinner.classList.remove('hidden');
+        summarySection.classList.add('hidden');
+        warningsSection.classList.add('hidden');
+        errorsSection.classList.add('hidden');
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const content = e.target.result;
+            const analyzer = new StructureAnalyzer();
+            const startTime = performance.now();
+            const results = analyzer.analyzeFileContent(content, currentFile.name);
+            const endTime = performance.now();
+            results.executionTime = ((endTime - startTime) / 1000).toFixed(2);
+            
+            loadingSpinner.classList.add('hidden');
+            displayResults(results);
+        };
+        reader.readAsText(currentFile);
+    });
+
+    const displayResults = (results) => {
+        summarySection.classList.remove('hidden');
+
+        // Resumen
+        summaryContent.innerHTML = `
+            <div class="bg-gray-700/50 p-3 rounded-lg">
+                <div class="text-2xl font-bold">${results.avisosCount}</div>
+                <div class="text-sm text-gray-400">Avisos</div>
+            </div>
+            <div class="bg-gray-700/50 p-3 rounded-lg">
+                <div class="text-2xl font-bold text-red-400">${results.errors.length}</div>
+                <div class="text-sm text-gray-400">Errores</div>
+            </div>
+            <div class="bg-gray-700/50 p-3 rounded-lg">
+                <div class="text-2xl font-bold text-yellow-400">${results.warnings.length}</div>
+                <div class="text-sm text-gray-400">Advertencias</div>
+            </div>
+            <div class="bg-gray-700/50 p-3 rounded-lg">
+                <div class="text-2xl font-bold">${results.executionTime}s</div>
+                <div class="text-sm text-gray-400">Tiempo</div>
+            </div>
+        `;
+
+        // Advertencias
+        if (results.warnings.length > 0) {
+            warningsSection.classList.remove('hidden');
+            warningsList.innerHTML = results.warnings.map(w => `<div>- ${w}</div>`).join('');
+        }
+
+        // Errores
+        if (results.errors.length > 0) {
+            errorsSection.classList.remove('hidden');
+            errorsList.innerHTML = results.errors.map(e => `<div>- ${e}</div>`).join('');
+        }
+        
+        if(results.errors.length === 0 && results.warnings.length === 0) {
+             summaryContent.insertAdjacentHTML('afterend', `<p class="text-center col-span-2 md:col-span-4 mt-4 text-green-400">✅ ¡El archivo parece estar perfecto!</p>`);
+        }
+    };
+});
+</script>
+
+</body>
+</html>
