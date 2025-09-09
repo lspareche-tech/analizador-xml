@@ -99,16 +99,14 @@
 <script>
 // --- Lógica del Analizador (Portado de Python a JavaScript) ---
 
-// Definición de campos obligatorios, actualizada según las reglas del documento.
+// **NUEVO: Definición de campos obligatorios, actualizada según las últimas reglas.**
 const DEFAULT_REQUIRED_FIELDS = {
     'OpenNavent': ['Avisos'], // fechaDeModificacion ahora es una advertencia
-    'Aviso': ['codigoAviso', 'descripcion', 'tipoDePropiedad', 'precios', 'localizacion', 'publicacion', 'publicador'],
-    'Aviso/tipoDePropiedad': ['idTipo', 'tipo'],
+    'Aviso': ['codigoAviso', 'descripcion', 'tipoDePropiedad', 'precios', 'localizacion', 'publicador'],
+    'Aviso/tipoDePropiedad': ['idTipo'],
     'Aviso/precios/precio': ['operacion', 'monto', 'moneda'],
-    'Aviso/localizacion': ['direccion', 'muestraMapa'], // idUbicacion se maneja con una regla especial
-    'Aviso/publicacion': ['tipoDePublicacion'],
-    'Aviso/publicador': ['codigoInmobiliaria', 'emailAsesor'],
-    'Aviso/caracteristicas/caracteristica': ['id', 'nombre']
+    'Aviso/publicador': ['codigoInmobiliaria'],
+    'Aviso/caracteristicas/caracteristica': ['id', 'nombre'] // Se mantiene para el "Modo Estricto"
 };
 
 class StructureAnalyzer {
@@ -116,13 +114,6 @@ class StructureAnalyzer {
         this.requiredFields = requiredFields;
     }
 
-    /**
-     * Analiza el contenido de un archivo XML.
-     * @param {string} content - El contenido del archivo.
-     * @param {string} fileName - El nombre del archivo.
-     * @param {boolean} strictMode - Si se deben reportar errores estrictos.
-     * @returns {{errors: string[], warnings: string[], avisosCount: number}}
-     */
     analyzeFileContent(content, fileName, strictMode) {
         let errors = [];
         let warnings = [];
@@ -165,13 +156,11 @@ class StructureAnalyzer {
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlString, "application/xml");
         
-        // **NUEVO: Manejo de errores de sintaxis mejorado**
         const parserError = doc.querySelector("parsererror");
         if (parserError) {
             let errorMessage = "Error de sintaxis XML. Revisa la estructura del archivo.";
             const errorDetails = parserError.querySelector('div');
             if (errorDetails) {
-                 // Limpia el mensaje para que sea más legible y traduce partes clave.
                 errorMessage = `Error de sintaxis: ${errorDetails.textContent.trim().replace('error on line', 'en línea').replace('at column', 'columna')}`;
             }
             errors.push(`${docName}: ${errorMessage}`);
@@ -182,7 +171,6 @@ class StructureAnalyzer {
         let avisosCount = 0;
 
         if (root.tagName === 'OpenNavent') {
-            // **NUEVO: <fechaDeModificacion> ahora es una advertencia**
             const hasFecha = root.querySelector(':scope > fechaDeModificacion');
             if (!hasFecha) {
                 warnings.push(`${docName}: Se recomienda incluir la etiqueta <fechaDeModificacion> para evitar la sobreescritura de datos.`);
@@ -191,7 +179,7 @@ class StructureAnalyzer {
             this._checkRequiredFields(root, errors, warnings, docName, 'OpenNavent', strictMode);
             const avisosContainer = root.querySelector('Avisos');
             if (avisosContainer) {
-                const avisos = Array.from(avisosContainer.children).filter(el => el.tagName === 'Aviso');
+                const avisos = Array.from(avisosContainer.children).filter(el => ['Aviso', 'Inmueble'].includes(el.tagName));
                 avisosCount = avisos.length;
 
                 if (avisos.length > 0) {
@@ -199,12 +187,6 @@ class StructureAnalyzer {
                         const codigo = aviso.querySelector('codigoAviso')?.textContent || 'sin_codigo';
                         const docId = `${docName}: Aviso #${i + 1} (${codigo})`;
 
-                        const nilAttr = aviso.getAttributeNS('http://www.w3.org/2001/XMLSchema-instance', 'nil');
-                        if (nilAttr && (nilAttr === 'true' || nilAttr === '1')) {
-                            warnings.push(`${docId} omitido por tener xsi:nil="${nilAttr}"`);
-                            return;
-                        }
-                        
                         if (aviso.children.length === 0) {
                             errors.push(`${docId} está vacío (no tiene elementos hijos).`);
                             return;
@@ -215,10 +197,7 @@ class StructureAnalyzer {
                 }
             }
         } else {
-            // El nombre del tag raíz puede variar (ej. Inmuebles), por eso es una advertencia.
             warnings.push(`${docName}: El elemento raíz no es '<OpenNavent>'. Se analizará como un XML genérico.`);
-            
-            // Intenta encontrar avisos o inmuebles para analizarlos individualmente
             const avisos = doc.querySelectorAll('Aviso, Inmueble');
             avisosCount = avisos.length;
             avisos.forEach((aviso, i) => {
@@ -257,13 +236,15 @@ class StructureAnalyzer {
             });
         }
 
-        // Regla especial para idUbicacion vs Ubicacion
+        // **NUEVO: Regla especial para Ubicacion (idUbicacion O (latitud Y longitud))**
         if (path === 'Aviso/localizacion') {
             const childTags = Array.from(element.children).map(child => child.tagName);
             const hasIdUbicacion = childTags.includes('idUbicacion');
-            const hasUbicacion = childTags.includes('Ubicacion');
-            if (!hasIdUbicacion && !hasUbicacion) {
-                errors.push(`${docName}: Campo obligatorio 'idUbicacion' (o 'Ubicacion' como alternativa) faltante en '${path}'.`);
+            const hasLatitud = childTags.includes('latitud');
+            const hasLongitud = childTags.includes('longitud');
+
+            if (!hasIdUbicacion && !(hasLatitud && hasLongitud)) {
+                errors.push(`${docName}: Campo 'localizacion' incompleto. Se requiere 'idUbicacion' O ambos 'latitud' y 'longitud' en '${path}'.`);
             }
         }
         
@@ -277,7 +258,6 @@ class StructureAnalyzer {
 
 
 // --- Lógica de la Interfaz de Usuario (UI) ---
-
 document.addEventListener('DOMContentLoaded', () => {
     const fileUpload = document.getElementById('file-upload');
     const fileNameDisplay = document.getElementById('file-name');
@@ -346,7 +326,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const displayResults = (results) => {
         summarySection.classList.remove('hidden');
-
         summaryContent.innerHTML = `
             <div class="bg-gray-700/50 p-3 rounded-lg"><div class="text-2xl font-bold">${results.avisosCount}</div><div class="text-sm text-gray-400">Avisos</div></div>
             <div class="bg-gray-700/50 p-3 rounded-lg"><div class="text-2xl font-bold text-red-400">${results.errors.length}</div><div class="text-sm text-gray-400">Errores</div></div>
@@ -378,4 +357,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </body>
 </html>
+
 
