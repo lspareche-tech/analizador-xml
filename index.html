@@ -99,12 +99,13 @@
 <script>
 // --- Lógica del Analizador (Portado de Python a JavaScript) ---
 
-// Definición de campos obligatorios, igual que en tu script de Python
+// Definición de campos obligatorios, actualizada según las reglas del documento.
 const DEFAULT_REQUIRED_FIELDS = {
+    'OpenNavent': ['fechaDeModificacion', 'Avisos'],
     'Aviso': ['codigoAviso', 'descripcion', 'tipoDePropiedad', 'precios', 'localizacion', 'publicacion', 'publicador'],
     'Aviso/tipoDePropiedad': ['idTipo', 'tipo'],
     'Aviso/precios/precio': ['operacion', 'monto', 'moneda'],
-    'Aviso/localizacion': ['direccion', 'idUbicacion', 'muestraMapa'],
+    'Aviso/localizacion': ['direccion', 'muestraMapa'], // idUbicacion se maneja con una regla especial
     'Aviso/publicacion': ['tipoDePublicacion'],
     'Aviso/publicador': ['codigoInmobiliaria', 'emailAsesor'],
     'Aviso/caracteristicas/caracteristica': ['id', 'nombre']
@@ -175,6 +176,7 @@ class StructureAnalyzer {
         let avisosCount = 0;
 
         if (root.tagName === 'OpenNavent') {
+            this._checkRequiredFields(root, errors, docName, 'OpenNavent', strictMode);
             const avisosContainer = root.querySelector('Avisos');
             if (avisosContainer) {
                 const avisos = Array.from(avisosContainer.children).filter(el => el.tagName === 'Aviso');
@@ -199,10 +201,8 @@ class StructureAnalyzer {
                         this._checkRequiredFields(aviso, errors, docId, 'Aviso', strictMode);
                     });
                 } else {
-                    errors.push(`${docName}: No se encontraron elementos '<Aviso>' dentro de '<Avisos>'.`);
+                    // This error is already caught by the OpenNavent check, so it's optional here.
                 }
-            } else {
-                errors.push(`${docName}: No se encontró el elemento '<Avisos>' en el MultiXML.`);
             }
         } else {
             warnings.push(`${docName}: El elemento raíz no es '<OpenNavent>'. Se analizará como un XML genérico.`);
@@ -219,19 +219,20 @@ class StructureAnalyzer {
         if (requiredFieldsForPath) {
             const childTags = Array.from(element.children).map(child => child.tagName);
 
+            // Check for missing fields
             requiredFieldsForPath.forEach(field => {
                 if (!childTags.includes(field)) {
                     errors.push(`${docName}: Campo obligatorio '${field}' faltante en '${path}'.`);
                 }
             });
 
+            // Check for empty fields
             requiredFieldsForPath.forEach(field => {
                 const childElement = element.querySelector(`:scope > ${field}`);
                 if (childElement && (!childElement.textContent || childElement.textContent.trim() === '')) {
                     if(childElement.children.length === 0) {
-                        // Manejo especial para características en modo no estricto
                         if (path === 'Aviso/caracteristicas/caracteristica' && !strictMode) {
-                            // En modo no estricto, ignoramos este error para replicar el comportamiento anterior
+                            // In non-strict mode, ignore this error for characteristics
                         } else {
                             errors.push(`${docName}: Campo obligatorio '${field}' en '${path}' está vacío.`);
                         }
@@ -239,7 +240,19 @@ class StructureAnalyzer {
                 }
             });
         }
+
+        // *** NUEVA REGLA ESPECIAL para idUbicacion vs Ubicacion ***
+        if (path === 'Aviso/localizacion') {
+            const childTags = Array.from(element.children).map(child => child.tagName);
+            const hasIdUbicacion = childTags.includes('idUbicacion');
+            const hasUbicacion = childTags.includes('Ubicacion');
+
+            if (!hasIdUbicacion && !hasUbicacion) {
+                errors.push(`${docName}: Campo obligatorio 'idUbicacion' (o 'Ubicacion' como alternativa) faltante en '${path}'.`);
+            }
+        }
         
+        // Recursive call for children
         Array.from(element.children).forEach(child => {
             const newPath = `${path}/${child.tagName}`;
             this._checkRequiredFields(child, errors, docName, newPath, strictMode);
@@ -267,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentFile = null;
 
     const handleFileSelect = (file) => {
-        if (file && file.type === 'text/xml') {
+        if (file && (file.type === 'text/xml' || file.name.endsWith('.xml'))) {
             currentFile = file;
             fileNameDisplay.innerHTML = `<span class="font-semibold">${file.name}</span>`;
             analyzeButton.disabled = false;
@@ -355,11 +368,13 @@ document.addEventListener('DOMContentLoaded', () => {
              summaryContent.insertAdjacentHTML('afterend', `<p class="status-message text-center col-span-2 md:col-span-4 mt-4 text-green-400">✅ ¡El archivo parece estar perfecto!</p>`);
         }
 
+        warningsSection.classList.add('hidden');
         if (results.warnings.length > 0) {
             warningsSection.classList.remove('hidden');
             warningsList.innerHTML = results.warnings.map(w => `<div>- ${w}</div>`).join('');
         }
-
+        
+        errorsSection.classList.add('hidden');
         if (results.errors.length > 0) {
             errorsSection.classList.remove('hidden');
             errorsList.innerHTML = results.errors.map(e => `<div>- ${e}</div>`).join('');
@@ -370,5 +385,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </body>
 </html>
-
 
