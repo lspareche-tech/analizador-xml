@@ -51,7 +51,6 @@
         <!-- Opciones de Análisis -->
         <div class="flex items-center justify-center space-x-3 text-sm text-gray-400">
             <input type="checkbox" id="strict-mode" name="strict-mode" class="h-4 w-4 rounded border-gray-500 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800" checked>
-            <!-- **NUEVO: Etiqueta del checkbox actualizada** -->
             <label for="strict-mode">Modo Estricto (requerir &lt;id&gt; y reportar vacíos en características)</label>
         </div>
 
@@ -106,7 +105,7 @@ const DEFAULT_REQUIRED_FIELDS = {
     'Aviso/tipoDePropiedad': ['idTipo'],
     'Aviso/precios/precio': ['operacion', 'monto', 'moneda'],
     'Aviso/publicador': ['codigoInmobiliaria'],
-    'Aviso/caracteristicas/caracteristica': ['id', 'nombre'] // La regla base se mantiene, la lógica la flexibiliza
+    'Aviso/caracteristicas/caracteristica': ['id', 'nombre']
 };
 
 class StructureAnalyzer {
@@ -218,11 +217,10 @@ class StructureAnalyzer {
 
             // Check for missing fields
             requiredFieldsForPath.forEach(field => {
-                // **NUEVO: Lógica flexible para el 'id' de la característica**
-                if (path === 'Aviso/caracteristicas/caracteristica' && field === 'id' && !strictMode) {
-                    return; // En modo flexible, no se requiere el 'id'
-                }
-                if (!childTags.includes(field)) {
+                // **CORRECCIÓN: La condición ahora sí previene el error en modo flexible**
+                const isFlexibleCharacteristicId = path === 'Aviso/caracteristicas/caracteristica' && field === 'id' && !strictMode;
+
+                if (!isFlexibleCharacteristicId && !childTags.includes(field)) {
                     errors.push(`${docName}: Campo obligatorio '${field}' faltante en '${path}'.`);
                 }
             });
